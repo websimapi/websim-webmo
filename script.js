@@ -70,19 +70,44 @@ async function getAllFollowingIds(username) {
 
 // --- Tip Calculation and Storage ---
 
+async function getAllUserProjectIds(userId) {
+    const projectIds = new Set();
+    let hasNextPage = true;
+    let cursor = null;
+
+    while (hasNextPage) {
+        const params = new URLSearchParams({ first: '100' });
+        if (cursor) {
+            params.append('after', cursor);
+        }
+        try {
+            const response = await fetch(`/api/v1/users/${userId}/projects?${params.toString()}`);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const data = await response.json();
+            const { data: projects, meta } = data.projects;
+            projects.forEach(item => projectIds.add(item.project.id));
+            hasNextPage = meta.has_next_page;
+            cursor = meta.end_cursor;
+        } catch (error) {
+            console.error(`Failed to fetch a page of projects for user ${userId}:`, error);
+            hasNextPage = false; // Stop on error
+        }
+    }
+    return Array.from(projectIds);
+}
+
 async function updateAndDisplayTips(userId) {
     let totalTips = 0;
     try {
-        const response = await fetch(`/api/v1/users/${userId}/projects?first=100`); // Get user's projects
-        if (!response.ok) throw new Error('Failed to fetch user projects');
-        const projectData = await response.json();
+        const projectIds = await getAllUserProjectIds(userId);
         
-        const projectIds = projectData.projects.data.map(p => p.project.id);
-        
-        const tipPromises = projectIds.map(projectId => fetchTipsForProject(projectId, currentUser.id));
-        const tipAmounts = await Promise.all(tipPromises);
-        
-        totalTips = tipAmounts.reduce((sum, amount) => sum + amount, 0);
+        if (projectIds.length > 0) {
+            const tipPromises = projectIds.map(projectId => fetchTipsForProject(projectId, currentUser.id));
+            const tipAmounts = await Promise.all(tipPromises);
+            totalTips = tipAmounts.reduce((sum, amount) => sum + amount, 0);
+        }
 
         localStorage.setItem(`tips_given_${userId}`, totalTips);
 
