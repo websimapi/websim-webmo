@@ -16,6 +16,7 @@ const profileModal = document.getElementById('profile-modal');
 const closeProfileModalButton = document.getElementById('close-profile-modal');
 const profileIframe = document.getElementById('profile-iframe');
 const profileNotificationUsername = document.getElementById('profile-notification-username');
+const iframeLoader = document.getElementById('iframe-loader');
 
 async function init() {
     try {
@@ -113,17 +114,76 @@ function createUserCard(user) {
     return card;
 }
 
-function openProfileModal(user) {
+async function isGuest(username) {
+    try {
+        // This subdomain is a convention for checking if a user profile page has been set up.
+        const profileUrl = `https://profile--${username}.on.websim.ai`;
+        const response = await fetch(profileUrl);
+
+        if (!response.ok && response.status === 404) {
+             const errorBody = await response.json().catch(() => ({}));
+             if (errorBody?.error?.message === 'Not found') {
+                return true; // Profile does not exist, user is a "guest".
+             }
+        }
+        return false; // Profile exists.
+    } catch (e) {
+        console.error(`Error checking profile for ${username}:`, e);
+        return true; // Treat network or other errors as being a guest.
+    }
+}
+
+async function openProfileModal(user) {
     if (!user) return;
-    const profileUrl = `https://websim.com/@${user.username}`;
-    profileIframe.src = profileUrl;
+
     profileNotificationUsername.textContent = `@${user.username}`;
     profileModal.style.display = 'flex';
+    profileIframe.style.display = 'none';
+    iframeLoader.style.display = 'block';
+
+    let contentUrl;
+    const userIsGuest = await isGuest(user.username);
+
+    if (userIsGuest) {
+        console.log(`@${user.username} is a guest. Looking for projects...`);
+        try {
+            const response = await fetch(`/api/v1/users/${user.username}/projects?first=1`);
+            const data = await response.json();
+            if (data.projects?.data?.length > 0) {
+                const project = data.projects.data[0].project;
+                contentUrl = `https://websim.com/p/${project.id}`;
+                console.log(`Found project ${project.id}. Loading in iframe.`);
+            } else {
+                console.log(`No projects found for @${user.username}.`);
+            }
+        } catch (error) {
+            console.error(`Failed to fetch projects for @${user.username}:`, error);
+        }
+    }
+
+    if (!contentUrl) {
+        contentUrl = `https://websim.com/@${user.username}`;
+        console.log(`Loading profile page for @${user.username} in iframe.`);
+    }
+    
+    profileIframe.onload = () => {
+        iframeLoader.style.display = 'none';
+        profileIframe.style.display = 'block';
+    };
+    
+    profileIframe.onerror = () => {
+        iframeLoader.textContent = 'Could not load content.';
+    };
+
+    profileIframe.src = contentUrl;
 }
 
 function closeProfileModal() {
     profileModal.style.display = 'none';
     profileIframe.src = 'about:blank'; // Stop loading and clear content
+    profileIframe.style.display = 'none';
+    iframeLoader.style.display = 'block'; // Reset loader
+    iframeLoader.textContent = 'Loading profile...';
 }
 
 function handleSearch() {
