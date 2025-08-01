@@ -6,6 +6,7 @@
     --text-color: #212529;
     --border-color: #dee2e6;
     --shadow-color: rgba(0, 0, 0, 0.1);
+    --cached-user-border-color: #ffc107; /* A gold/yellow color for cached users */
 }
 
 body {
@@ -109,6 +110,11 @@ main {
     border-radius: 50%;
     margin-bottom: 1rem;
     border: 3px solid var(--primary-color);
+    transition: border-color 0.2s;
+}
+
+.user-card.not-followed .avatar {
+    border-color: var(--cached-user-border-color);
 }
 
 .user-card .username {

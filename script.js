@@ -9,6 +9,8 @@ let isLoading = false;
 let currentSearchQuery = '';
 let viewedProfileData = null; // Store data about the user/project being viewed in the modal
 
+const CACHED_USERS_KEY = 'webmo_cached_users';
+
 const userGrid = document.getElementById('user-grid');
 const loadingDiv = document.getElementById('loading');
 const scrollLoader = document.getElementById('scroll-loader');
@@ -45,6 +47,8 @@ async function init() {
 
         if (currentUser) {
             await loadContent();
+            await loadCachedUsers();
+            await handleUrlUserParameter();
         } else {
             loadingDiv.textContent = 'Please log in to see your followed users.';
             loadingDiv.style.display = 'block';
@@ -53,6 +57,64 @@ async function init() {
         console.error("Initialization error:", error);
         loadingDiv.textContent = 'Could not load user data. Please try again.';
         loadingDiv.style.display = 'block';
+    }
+}
+
+async function handleUrlUserParameter() {
+    const params = new URLSearchParams(window.location.search);
+    const username = params.get('user');
+    if (!username) return;
+
+    try {
+        const response = await fetch(`/api/v1/users/${username}`);
+        if (!response.ok) {
+            console.error(`User ${username} not found via URL parameter.`);
+            // Maybe show a notification to the user
+            return;
+        }
+        const { user } = await response.json();
+        
+        // Open the modal for the user from the URL.
+        openProfileModal(user);
+
+        // Check if the user is followed.
+        const followedUserIds = await getAllFollowingIds(currentUser.username);
+        const isFollowed = followedUserIds.has(user.id);
+        
+        // Check if a card for this user already exists.
+        const existingCard = userGrid.querySelector(`.user-card[data-user-id="${user.id}"]`);
+
+        if (!isFollowed && !existingCard) {
+            addUnfollowedUserToGrid(user);
+            cacheUnfollowedUser(user);
+        }
+    } catch (error) {
+        console.error(`Error handling user from URL parameter:`, error);
+    }
+}
+
+async function loadCachedUsers() {
+    const cachedUsers = JSON.parse(localStorage.getItem(CACHED_USERS_KEY) || '[]');
+    if (cachedUsers.length === 0) return;
+    
+    const followedUserIds = await getAllFollowingIds(currentUser.username);
+    
+    for (const user of cachedUsers) {
+        const isFollowed = followedUserIds.has(user.id);
+        const cardExists = userGrid.querySelector(`.user-card[data-user-id="${user.id}"]`);
+        
+        if (!isFollowed && !cardExists) {
+            addUnfollowedUserToGrid(user);
+        }
+    }
+}
+
+function cacheUnfollowedUser(user) {
+    let cachedUsers = JSON.parse(localStorage.getItem(CACHED_USERS_KEY) || '[]');
+    // Avoid duplicates
+    if (!cachedUsers.some(cachedUser => cachedUser.id === user.id)) {
+        cachedUsers.push(user);
+        localStorage.setItem(CACHED_USERS_KEY, JSON.stringify(cachedUsers));
     }
 }
 
@@ -287,10 +349,14 @@ async function loadFollowingUsers(cursor = null) {
 
 // --- UI Rendering ---
 
-function createUserCard(user) {
+function createUserCard(user, isNotFollowed = false) {
     const card = document.createElement('div');
     card.className = 'user-card';
+    if (isNotFollowed) {
+        card.classList.add('not-followed');
+    }
     card.setAttribute('data-user-id', user.id);
+    card.setAttribute('data-user-name', user.username.toLowerCase()); // For easier lookups
 
     const storedTips = localStorage.getItem(`tips_given_${user.id}`) || 0;
 
@@ -308,6 +374,11 @@ function createUserCard(user) {
     updateAndDisplayTips(user.id);
 
     return card;
+}
+
+function addUnfollowedUserToGrid(user) {
+    const userCard = createUserCard(user, true); // true for isNotFollowed
+    userGrid.prepend(userCard); // Add to the top of the grid
 }
 
 async function isGuest(username) {
