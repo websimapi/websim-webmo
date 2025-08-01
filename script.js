@@ -1,5 +1,6 @@
 let currentUser = null;
 let currentProject = null;
+let projectCreator = null;
 
 // State for pagination and search
 let nextCursor = null;
@@ -14,30 +15,33 @@ const scrollLoader = document.getElementById('scroll-loader');
 const searchInput = document.getElementById('search-input');
 
 // Tip Modal Elements
+const tipCreatorButton = document.getElementById('tip-creator-btn');
 const tipModal = document.getElementById('tip-modal');
 const closeTipModalButton = document.getElementById('close-modal');
 const tipForm = document.getElementById('tip-form');
-const tipUsernameSpan = document.getElementById('tip-username');
-const tipUsernameNotification = document.getElementById('tip-username-notification');
-const tipProjectTitle = document.getElementById('tip-project-title');
 const tipAmountInput = document.getElementById('tip-amount');
 const tipMessageInput = document.getElementById('tip-message');
+const tipUsernameSpan = document.getElementById('tip-username');
 const submitTipButton = document.getElementById('submit-tip-button');
+const presetTipButtons = document.querySelectorAll('.preset-tip-btn');
 
 const profileModal = document.getElementById('profile-modal');
-const profileModalContent = profileModal.querySelector('.modal-content');
 const closeProfileModalButton = document.getElementById('close-profile-modal');
 const profileIframe = document.getElementById('profile-iframe');
 const profileNotificationUsername = document.getElementById('profile-notification-username');
 const iframeLoader = document.getElementById('iframe-loader');
-const tipUserButton = document.getElementById('tip-user-button');
 
 async function init() {
     try {
-        [currentUser, currentProject] = await Promise.all([
+        [currentUser, currentProject, projectCreator] = await Promise.all([
             window.websim.getCurrentUser(),
-            window.websim.getCurrentProject()
+            window.websim.getCurrentProject(),
+            window.websim.getCreator()
         ]);
+
+        if (tipCreatorButton && projectCreator) {
+            tipCreatorButton.style.display = 'block';
+        }
 
         if (currentUser) {
             await loadContent();
@@ -50,76 +54,6 @@ async function init() {
         loadingDiv.textContent = 'Could not load user data. Please try again.';
         loadingDiv.style.display = 'block';
     }
-}
-
-function openTipModal() {
-    if (!viewedProfileData || !viewedProfileData.project) {
-        console.error("No project loaded, cannot tip.", viewedProfileData);
-        alert("A project page must be loaded to send a tip.");
-        return;
-    }
-    
-    const { user, project } = viewedProfileData;
-    
-    tipUsernameSpan.textContent = `@${user.username}`;
-    tipUsernameNotification.textContent = `@${user.username}`;
-    tipProjectTitle.textContent = project.title || 'this project';
-    tipAmountInput.value = '10';
-    tipMessageInput.value = `Great work! Sent from Webmo.`;
-    
-    profileModal.style.display = 'none'; // Hide profile modal
-    tipModal.style.display = 'flex';
-}
-
-function closeTipModal() {
-    tipModal.style.display = 'none';
-    profileModal.style.display = 'flex'; // Show profile modal again
-}
-
-async function handleTipSubmit(event) {
-    event.preventDefault();
-    if (!viewedProfileData || !viewedProfileData.project) return;
-
-    const amount = parseInt(tipAmountInput.value, 10);
-    const message = tipMessageInput.value.trim();
-
-    if (!message || isNaN(amount) || amount < 10) {
-        alert("Please enter a valid message and an amount of at least 10 credits.");
-        return;
-    }
-
-    submitTipButton.disabled = true;
-    submitTipButton.textContent = 'Sending...';
-
-    try {
-        await window.websim.postComment({
-            content: message,
-            credits: amount,
-            project_id: viewedProfileData.project.id
-        });
-        
-        // The 'comment:created' listener will handle UI updates
-        // We can optimistically close the modal. If the user cancels, no harm done.
-        tipModal.style.display = 'none';
-
-        // Wait a moment for comment to post before re-showing profile
-        setTimeout(() => {
-             profileModal.style.display = 'flex';
-             // Also update tips when modal is closed
-        }, 500);
-
-    } catch (error) {
-        console.error('Error posting tip comment:', error);
-        alert('Could not post tip. The request may have been cancelled or failed.');
-    } finally {
-        submitTipButton.disabled = false;
-        submitTipButton.textContent = 'Send Tip';
-    }
-}
-
-async function handleTipUser() {
-    // This now just opens our custom modal
-    openTipModal();
 }
 
 async function getAllFollowingIds(username) {
@@ -361,7 +295,7 @@ function createUserCard(user) {
     const storedTips = localStorage.getItem(`tips_given_${user.id}`) || 0;
 
     card.innerHTML = `
-        <img src="${user.avatar_url || `https://images.websim.com/avatar/${user.username}`}" alt="${user.username}'s avatar" class="avatar">
+        <img src="${user.avatar_url || 'https://images.websim.com/avatar/websim'}" alt="${user.username}'s avatar" class="avatar">
         <div class="username">@${user.username}</div>
         <div class="tip-info">Total Tips Given: <span class="tip-amount">${storedTips}</span> credits</div>
     `;
@@ -398,42 +332,37 @@ async function isGuest(username) {
 async function openProfileModal(user) {
     if (!user) return;
 
-    viewedProfileData = { user, project: null }; // Reset data
-    profileModalContent.classList.add('profile-modal-content');
+    viewedProfileData = { user }; // Store the user being viewed
 
     profileNotificationUsername.textContent = `@${user.username}`;
     profileModal.style.display = 'flex';
     profileIframe.style.display = 'none';
     iframeLoader.style.display = 'block';
-    iframeLoader.textContent = 'Loading profile...';
 
     let contentUrl;
-    
-    // Prioritize finding a posted project to enable tipping
-    try {
-        const response = await fetch(`/api/v1/users/${user.username}/projects?first=1&posted=true&sort_by=updated_at`);
-        if (!response.ok) throw new Error(`API error: ${response.status}`);
-        
-        const data = await response.json();
-        if (data.projects?.data?.length > 0) {
-            const project = data.projects.data[0].project;
-            viewedProfileData.project = project;
-            contentUrl = `https://websim.com/p/${project.id}`;
-            console.log(`Found project ${project.id} for @${user.username}. Loading in iframe.`);
-        } else {
-            console.log(`No posted projects for @${user.username}. Falling back to profile page.`);
+    const userIsGuest = await isGuest(user.username);
+
+    if (userIsGuest) {
+        console.log(`@${user.username} is a guest. Looking for projects...`);
+        try {
+            const response = await fetch(`/api/v1/users/${user.username}/projects?first=1`);
+            const data = await response.json();
+            if (data.projects?.data?.length > 0) {
+                const project = data.projects.data[0].project;
+                contentUrl = `https://websim.com/p/${project.id}`;
+                console.log(`Found project ${project.id}. Loading in iframe.`);
+            } else {
+                console.log(`No projects found for @${user.username}.`);
+            }
+        } catch (error) {
+            console.error(`Failed to fetch projects for @${user.username}:`, error);
         }
-    } catch (error) {
-        console.error(`Failed to fetch projects for @${user.username}:`, error);
     }
 
-    // Fallback to profile page if no project is found
     if (!contentUrl) {
         contentUrl = `https://websim.com/@${user.username}`;
+        console.log(`Loading profile page for @${user.username} in iframe.`);
     }
-
-    // Toggle tip button based on whether a project is loaded
-    tipUserButton.style.display = viewedProfileData.project ? 'block' : 'none';
     
     profileIframe.onload = () => {
         iframeLoader.style.display = 'none';
@@ -442,7 +371,6 @@ async function openProfileModal(user) {
     
     profileIframe.onerror = () => {
         iframeLoader.textContent = 'Could not load content.';
-        tipUserButton.style.display = 'none';
     };
 
     profileIframe.src = contentUrl;
@@ -451,7 +379,6 @@ async function openProfileModal(user) {
 function closeProfileModal() {
     profileModal.style.display = 'none';
     profileIframe.src = 'about:blank'; // Stop loading and clear content
-    profileModalContent.classList.remove('profile-modal-content');
 
     if (viewedProfileData && viewedProfileData.user) {
         console.log(`Updating tips for @${viewedProfileData.user.username}`);
@@ -466,39 +393,89 @@ function closeProfileModal() {
     iframeLoader.textContent = 'Loading profile...';
 }
 
-function handleSearch() {
-    const query = searchInput.value.trim();
-    if (query === currentSearchQuery) return;
+// --- Tip Modal Logic ---
 
-    currentSearchQuery = query;
-    nextCursor = null; // Reset cursor
-    hasNextPage = true; // Reset pagination
-    userGrid.innerHTML = ''; // Clear grid immediately
-    
-    // If search is cleared, load initial list. Otherwise, perform search.
-    if (!query) {
-        loadingDiv.textContent = 'Loading followed users...';
-        loadFollowingUsers();
-    } else {
-        loadContent();
+function openCreatorTipModal() {
+    if (!projectCreator || !currentProject) return;
+
+    tipUsernameSpan.textContent = `@${projectCreator.username}`;
+    tipMessageInput.value = `Great work on ${currentProject.title}!`;
+    tipAmountInput.value = '10';
+    tipModal.style.display = 'flex';
+}
+
+function closeTipModal() {
+    tipModal.style.display = 'none';
+    tipForm.reset();
+}
+
+async function handleTipSubmit(e) {
+    e.preventDefault();
+    if (submitTipButton.disabled) return;
+
+    const amount = parseInt(tipAmountInput.value, 10);
+    const message = tipMessageInput.value.trim();
+
+    if (!message) {
+        alert('Please enter a message.');
+        return;
+    }
+    if (isNaN(amount) || amount < 10) {
+        alert('Minimum tip amount is 10 credits.');
+        return;
+    }
+
+    submitTipButton.disabled = true;
+    submitTipButton.textContent = 'Sending...';
+
+    try {
+        // This will open the native websim UI for the user to confirm the tip comment.
+        await window.websim.postComment({
+            content: message,
+            credits: amount,
+        });
+
+        // The native UI handles the final confirmation. We can close our modal now.
+        closeTipModal();
+
+    } catch (error) {
+        console.error('Failed to initiate tip:', error);
+        alert('Could not initiate tip. Please make sure you are logged in and have interacted with the page.');
+    } finally {
+        submitTipButton.disabled = false;
+        submitTipButton.textContent = 'Send Tip';
     }
 }
 
 // --- Event Listeners ---
 
-tipUserButton.addEventListener('click', handleTipUser);
-tipForm.addEventListener('submit', handleTipSubmit);
-closeTipModalButton.addEventListener('click', closeTipModal);
+if (tipCreatorButton) {
+    tipCreatorButton.addEventListener('click', openCreatorTipModal);
+}
+if (closeTipModalButton) {
+    closeTipModalButton.addEventListener('click', closeTipModal);
+}
+if (tipModal) {
+    tipModal.addEventListener('click', (event) => {
+        if (event.target === tipModal) {
+            closeTipModal();
+        }
+    });
+}
+if (tipForm) {
+    tipForm.addEventListener('submit', handleTipSubmit);
+}
+presetTipButtons.forEach(button => {
+    button.addEventListener('click', () => {
+        tipAmountInput.value = button.dataset.amount;
+    });
+});
 
 closeProfileModalButton.addEventListener('click', closeProfileModal);
 
 window.addEventListener('click', (event) => {
     if (event.target === profileModal) {
         closeProfileModal();
-    }
-    if (event.target === tipModal) {
-        tipModal.style.display = 'none';
-        profileModal.style.display = 'flex';
     }
 });
 
@@ -518,20 +495,6 @@ window.addEventListener('scroll', () => {
     } = document.documentElement;
     if (scrollTop + clientHeight >= scrollHeight - 100) {
         loadContent(nextCursor);
-    }
-});
-
-window.websim.addEventListener('comment:created', (data) => {
-    const { comment } = data;
-    // Check if the new comment is a tip from the current user
-    if (
-        comment.author.id === currentUser.id &&
-        comment.card_data?.type === 'tip_comment' &&
-        viewedProfileData?.user && 
-        comment.project_id === viewedProfileData.project.id
-    ) {
-        console.log('Successfully posted a tip. Updating display.');
-        updateAndDisplayTips(viewedProfileData.user.id);
     }
 });
 
