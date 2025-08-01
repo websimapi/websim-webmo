@@ -41,19 +41,30 @@ async function init() {
 }
 
 async function handleTipUser() {
-    if (!viewedProfileData || !viewedProfileData.user) {
-        console.error("No user selected to tip.");
+    if (!viewedProfileData || !viewedProfileData.projectId) {
+        console.error("No project loaded, cannot tip.", viewedProfileData);
+        alert("A project page must be loaded to send a tip.");
         return;
     }
-    const userToTip = viewedProfileData.user;
-    
-    // Note: This will post a tip comment on the CURRENT project ("Webmo"),
-    // and the credits will go to the creator of the Webmo project.
-    // The message will indicate who the tip is intended for.
-    window.websim.postComment({
-        content: `Tip for @${userToTip.username}`,
-        credits: 10
-    });
+
+    // Ensure the iframe and its content are accessible
+    if (profileIframe.contentWindow && profileIframe.contentWindow.websim && typeof profileIframe.contentWindow.websim.postComment === 'function') {
+        try {
+            console.log(`Attempting to tip @${viewedProfileData.user.username} via their project in the iframe.`);
+            // This will open the comment dialog within the iframe's context,
+            // correctly associating the tip with the loaded project.
+            profileIframe.contentWindow.websim.postComment({
+                content: `Great work! Sent from Webmo.`,
+                credits: 10,
+            });
+        } catch (error) {
+            console.error("Error calling postComment on iframe:", error);
+            alert("Could not send tip. This can happen due to page security settings. Please try tipping directly on the page.");
+        }
+    } else {
+        console.warn("Could not find postComment function on iframe. It might not have loaded yet, or isn't a project page.");
+        alert("The user's page may not support this feature or hasn't fully loaded. Please wait or use the page's built-in controls.");
+    }
 }
 
 async function getAllFollowingIds(username) {
@@ -332,37 +343,41 @@ async function isGuest(username) {
 async function openProfileModal(user) {
     if (!user) return;
 
-    viewedProfileData = { user }; // Store the user being viewed
+    viewedProfileData = { user, projectId: null }; // Reset data
 
     profileNotificationUsername.textContent = `@${user.username}`;
     profileModal.style.display = 'flex';
     profileIframe.style.display = 'none';
     iframeLoader.style.display = 'block';
+    iframeLoader.textContent = 'Loading profile...';
 
     let contentUrl;
-    const userIsGuest = await isGuest(user.username);
-
-    if (userIsGuest) {
-        console.log(`@${user.username} is a guest. Looking for projects...`);
-        try {
-            const response = await fetch(`/api/v1/users/${user.username}/projects?first=1`);
-            const data = await response.json();
-            if (data.projects?.data?.length > 0) {
-                const project = data.projects.data[0].project;
-                contentUrl = `https://websim.com/p/${project.id}`;
-                console.log(`Found project ${project.id}. Loading in iframe.`);
-            } else {
-                console.log(`No projects found for @${user.username}.`);
-            }
-        } catch (error) {
-            console.error(`Failed to fetch projects for @${user.username}:`, error);
+    
+    // Prioritize finding a posted project to enable tipping
+    try {
+        const response = await fetch(`/api/v1/users/${user.username}/projects?first=1&posted=true&sort_by=updated_at`);
+        if (!response.ok) throw new Error(`API error: ${response.status}`);
+        
+        const data = await response.json();
+        if (data.projects?.data?.length > 0) {
+            const project = data.projects.data[0].project;
+            viewedProfileData.projectId = project.id;
+            contentUrl = `https://websim.com/p/${project.id}`;
+            console.log(`Found project ${project.id} for @${user.username}. Loading in iframe.`);
+        } else {
+            console.log(`No posted projects found for @${user.username}. Falling back to profile page.`);
         }
+    } catch (error) {
+        console.error(`Failed to fetch projects for @${user.username}:`, error);
     }
 
+    // Fallback to profile page if no project is found
     if (!contentUrl) {
         contentUrl = `https://websim.com/@${user.username}`;
-        console.log(`Loading profile page for @${user.username} in iframe.`);
     }
+
+    // Toggle tip button based on whether a project is loaded
+    tipUserButton.style.display = viewedProfileData.projectId ? 'block' : 'none';
     
     profileIframe.onload = () => {
         iframeLoader.style.display = 'none';
@@ -371,6 +386,7 @@ async function openProfileModal(user) {
     
     profileIframe.onerror = () => {
         iframeLoader.textContent = 'Could not load content.';
+        tipUserButton.style.display = 'none';
     };
 
     profileIframe.src = contentUrl;
