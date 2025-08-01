@@ -1,15 +1,20 @@
 let currentUser = null;
 let currentProject = null;
-let selectedUserForTipping = null;
+
+// State for pagination and search
+let nextCursor = null;
+let hasNextPage = true;
+let isLoading = false;
+let currentSearchQuery = '';
 
 const userGrid = document.getElementById('user-grid');
 const loadingDiv = document.getElementById('loading');
-const tipModal = document.getElementById('tip-modal');
-const closeModalButton = document.getElementById('close-modal');
-const tipForm = document.getElementById('tip-form');
-const tipUsernameSpan = document.getElementById('tip-username');
-const tipAmountInput = document.getElementById('tip-amount');
-const tipMessageInput = document.getElementById('tip-message');
+const scrollLoader = document.getElementById('scroll-loader');
+const searchInput = document.getElementById('search-input');
+
+const profileModal = document.getElementById('profile-modal');
+const closeProfileModalButton = document.getElementById('close-profile-modal');
+const profileIframe = document.getElementById('profile-iframe');
 
 async function init() {
     try {
@@ -19,47 +24,78 @@ async function init() {
         ]);
 
         if (currentUser) {
-            loadFollowingUsers(currentUser.username);
+            await loadUsers();
         } else {
             loadingDiv.textContent = 'Please log in to see your followed users.';
+            loadingDiv.style.display = 'block';
         }
     } catch (error) {
         console.error("Initialization error:", error);
         loadingDiv.textContent = 'Could not load user data. Please try again.';
+        loadingDiv.style.display = 'block';
     }
 }
 
-async function loadFollowingUsers(username) {
+async function loadUsers(cursor = null) {
+    if (isLoading || (!hasNextPage && cursor)) return;
+    isLoading = true;
+
+    if (cursor) {
+        scrollLoader.style.display = 'block';
+    } else {
+        loadingDiv.style.display = 'block';
+        userGrid.innerHTML = ''; // Clear for new search or initial load
+    }
+
     try {
-        const response = await fetch(`/api/v1/users/${username}/following`);
+        const params = new URLSearchParams({
+            first: '20'
+        });
+        if (cursor) {
+            params.append('after', cursor);
+        }
+        if (currentSearchQuery) {
+            params.append('query', currentSearchQuery);
+        }
+
+        const response = await fetch(`/api/v1/users/${currentUser.username}/following?${params.toString()}`);
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
         const data = await response.json();
+        const { data: users, meta } = data.following;
 
-        if (data.following.data.length === 0) {
-            loadingDiv.textContent = "You aren't following anyone yet. Explore Websim to find creators!";
-            return;
+        if (users.length === 0 && !cursor) {
+             if (currentSearchQuery) {
+                loadingDiv.textContent = `No users found for "${currentSearchQuery}".`;
+            } else {
+                loadingDiv.textContent = "You aren't following anyone yet. Explore Websim to find creators!";
+            }
+        } else {
+            loadingDiv.style.display = 'none';
         }
 
-        loadingDiv.style.display = 'none';
-        userGrid.innerHTML = ''; // Clear previous content
-
-        for (const { follow } of data.following.data) {
+        for (const { follow } of users) {
             const userCard = createUserCard(follow.user);
             userGrid.appendChild(userCard);
         }
+        
+        hasNextPage = meta.has_next_page;
+        nextCursor = meta.end_cursor;
 
     } catch (error) {
         console.error('Failed to load following users:', error);
         loadingDiv.textContent = 'Error loading followed users.';
+        loadingDiv.style.display = 'block';
+    } finally {
+        isLoading = false;
+        scrollLoader.style.display = 'none';
     }
 }
 
 function createUserCard(user) {
     const card = document.createElement('div');
     card.className = 'user-card';
-    card.dataset.user = JSON.stringify(user);
 
     const tipAmount = 0; // Placeholder as per instructions
 
@@ -70,65 +106,61 @@ function createUserCard(user) {
     `;
     
     card.addEventListener('click', () => {
-        selectedUserForTipping = user;
-        openTipModal();
+        openProfileModal(user);
     });
 
     return card;
 }
 
-function openTipModal() {
-    if (!selectedUserForTipping) return;
-    tipUsernameSpan.textContent = `@${selectedUserForTipping.username}`;
-    tipModal.style.display = 'flex';
+function openProfileModal(user) {
+    if (!user) return;
+    const profileUrl = `https://websim.com/@${user.username}`;
+    profileIframe.src = profileUrl;
+    profileModal.style.display = 'flex';
 }
 
-function closeTipModal() {
-    tipModal.style.display = 'none';
-    tipForm.reset();
-    selectedUserForTipping = null;
+function closeProfileModal() {
+    profileModal.style.display = 'none';
+    profileIframe.src = 'about:blank'; // Stop loading and clear content
 }
 
-async function handleTipSubmit(event) {
-    event.preventDefault();
-    if (!selectedUserForTipping) return;
+function handleSearch() {
+    const query = searchInput.value.trim().toLowerCase();
+    if(query === currentSearchQuery) return;
 
-    const amount = parseInt(tipAmountInput.value, 10);
-    const message = tipMessageInput.value.trim();
-
-    if (isNaN(amount) || amount < 10) {
-        alert('Minimum tip amount is 10 credits.');
-        return;
-    }
-    if (!message) {
-        alert('Please enter a message for your tip.');
-        return;
-    }
-    
-    const fullMessage = `To @${selectedUserForTipping.username}: ${message}`;
-
-    try {
-        await window.websim.postComment({
-            content: fullMessage,
-            credits: amount,
-        });
-        // The postComment UI handles success/failure messages for the user.
-        // We can just close our modal after they interact with it.
-        closeTipModal();
-    } catch (error) {
-        console.error("Failed to post comment:", error);
-        alert(`An error occurred while trying to tip: ${error.message}`);
-    }
+    currentSearchQuery = query;
+    nextCursor = null;
+    hasNextPage = true;
+    loadUsers();
 }
 
-closeModalButton.addEventListener('click', closeTipModal);
-tipForm.addEventListener('submit', handleTipSubmit);
+// --- Event Listeners ---
+
+closeProfileModalButton.addEventListener('click', closeProfileModal);
 
 window.addEventListener('click', (event) => {
-    if (event.target === tipModal) {
-        closeTipModal();
+    if (event.target === profileModal) {
+        closeProfileModal();
+    }
+});
+
+let searchTimeout;
+searchInput.addEventListener('input', () => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(handleSearch, 300);
+});
+
+window.addEventListener('scroll', () => {
+    if (isLoading || !hasNextPage) return;
+
+    const {
+        scrollTop,
+        scrollHeight,
+        clientHeight
+    } = document.documentElement;
+    if (scrollTop + clientHeight >= scrollHeight - 100) {
+        loadUsers(nextCursor);
     }
 });
 
 init();
-

@@ -29,6 +29,24 @@ header h1 {
     color: var(--primary-color);
 }
 
+header p {
+    margin-bottom: 1rem;
+}
+
+.search-container {
+    margin: 0 auto;
+    max-width: 500px;
+}
+
+#search-input {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    font-size: 1rem;
+    border-radius: 20px;
+    border: 1px solid var(--border-color);
+    box-sizing: border-box;
+}
+
 main {
     padding: 2rem;
     max-width: 1200px;
@@ -101,8 +119,11 @@ main {
     border-radius: 8px;
     box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
     width: 90%;
-    max-width: 500px;
+    max-width: 800px;
     position: relative;
+    display: flex;
+    flex-direction: column;
+    max-height: 90vh;
 }
 
 .close-button {
@@ -128,6 +149,20 @@ main {
 
 .notification p {
     margin: 0;
+}
+
+.iframe-container {
+    flex-grow: 1;
+    overflow: hidden; /* For border-radius on iframe */
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+}
+
+#profile-iframe {
+    width: 100%;
+    height: 100%;
+    min-height: 60vh;
+    border: none;
 }
 
 #tip-form {
@@ -168,4 +203,3 @@ main {
 #submit-tip-button:hover {
     background-color: #0056b3;
 }
-
