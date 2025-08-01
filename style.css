@@ -99,6 +99,11 @@ main {
     color: var(--secondary-color);
 }
 
+.user-card .tip-info .tip-amount {
+    font-weight: bold;
+    color: var(--primary-color);
+}
+
 /* Modal Styles */
 .modal-overlay {
     position: fixed;

@@ -6,6 +6,7 @@ let nextCursor = null;
 let hasNextPage = true;
 let isLoading = false;
 let currentSearchQuery = '';
+let viewedProfileData = null; // Store data about the user/project being viewed in the modal
 
 const userGrid = document.getElementById('user-grid');
 const loadingDiv = document.getElementById('loading');
@@ -65,6 +66,72 @@ async function getAllFollowingIds(username) {
         }
     }
     return followedUserIds;
+}
+
+// --- Tip Calculation and Storage ---
+
+async function updateAndDisplayTips(userId) {
+    let totalTips = 0;
+    try {
+        const response = await fetch(`/api/v1/users/${userId}/projects?first=100`); // Get user's projects
+        if (!response.ok) throw new Error('Failed to fetch user projects');
+        const projectData = await response.json();
+        
+        const projectIds = projectData.projects.data.map(p => p.project.id);
+        
+        const tipPromises = projectIds.map(projectId => fetchTipsForProject(projectId, currentUser.id));
+        const tipAmounts = await Promise.all(tipPromises);
+        
+        totalTips = tipAmounts.reduce((sum, amount) => sum + amount, 0);
+
+        localStorage.setItem(`tips_given_${userId}`, totalTips);
+
+    } catch (error) {
+        console.error(`Failed to update tips for user ${userId}:`, error);
+        // Fallback to localStorage if API fails
+        totalTips = parseInt(localStorage.getItem(`tips_given_${userId}`) || '0', 10);
+    }
+    
+    const tipElement = userGrid.querySelector(`.user-card[data-user-id="${userId}"] .tip-amount`);
+    if (tipElement) {
+        tipElement.textContent = totalTips;
+    }
+}
+
+async function fetchTipsForProject(projectId, tipperUserId) {
+    let totalTips = 0;
+    let hasNext = true;
+    let cursor = null;
+
+    while(hasNext) {
+        const params = new URLSearchParams({ only_tips: 'true', first: '100' });
+        if(cursor) params.append('after', cursor);
+
+        try {
+            const response = await fetch(`/api/v1/projects/${projectId}/comments?${params.toString()}`);
+            if (!response.ok) {
+                hasNext = false; // Stop on error
+                continue;
+            }
+            const data = await response.json();
+            const tipComments = data.comments.data;
+
+            for (const item of tipComments) {
+                const comment = item.comment;
+                if (comment.author.id === tipperUserId && comment.card_data && comment.card_data.type === 'tip_comment') {
+                    totalTips += comment.card_data.credits_spent;
+                }
+            }
+
+            hasNext = data.comments.meta.has_next_page;
+            cursor = data.comments.meta.end_cursor;
+
+        } catch (error) {
+            console.error(`Error fetching tips for project ${projectId}:`, error);
+            hasNext = false; // Stop on network error
+        }
+    }
+    return totalTips;
 }
 
 async function loadContent(cursor = null) {
@@ -176,21 +243,27 @@ async function loadFollowingUsers(cursor = null) {
     }
 }
 
+// --- UI Rendering ---
+
 function createUserCard(user) {
     const card = document.createElement('div');
     card.className = 'user-card';
+    card.setAttribute('data-user-id', user.id);
 
-    const tipAmount = 0; // Placeholder as per instructions
+    const storedTips = localStorage.getItem(`tips_given_${user.id}`) || 0;
 
     card.innerHTML = `
         <img src="${user.avatar_url || 'https://images.websim.com/avatar/websim'}" alt="${user.username}'s avatar" class="avatar">
         <div class="username">@${user.username}</div>
-        <div class="tip-info">Total Tips Received: ${tipAmount} credits</div>
+        <div class="tip-info">Total Tips Given: <span class="tip-amount">${storedTips}</span> credits</div>
     `;
     
     card.addEventListener('click', () => {
         openProfileModal(user);
     });
+    
+    // Asynchronously update tip counts for accuracy without blocking UI
+    updateAndDisplayTips(user.id);
 
     return card;
 }
@@ -216,6 +289,8 @@ async function isGuest(username) {
 
 async function openProfileModal(user) {
     if (!user) return;
+
+    viewedProfileData = { user }; // Store the user being viewed
 
     profileNotificationUsername.textContent = `@${user.username}`;
     profileModal.style.display = 'flex';
@@ -262,6 +337,15 @@ async function openProfileModal(user) {
 function closeProfileModal() {
     profileModal.style.display = 'none';
     profileIframe.src = 'about:blank'; // Stop loading and clear content
+
+    if (viewedProfileData && viewedProfileData.user) {
+        console.log(`Updating tips for @${viewedProfileData.user.username}`);
+        // This will fetch all tips from the current user to any of the viewed user's projects.
+        updateAndDisplayTips(viewedProfileData.user.id);
+    }
+    
+    viewedProfileData = null; // Clear the stored data
+
     profileIframe.style.display = 'none';
     iframeLoader.style.display = 'block'; // Reset loader
     iframeLoader.textContent = 'Loading profile...';
