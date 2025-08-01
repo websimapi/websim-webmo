@@ -9,8 +9,6 @@ let isLoading = false;
 let currentSearchQuery = '';
 let viewedProfileData = null; // Store data about the user/project being viewed in the modal
 
-const CACHED_USERS_KEY = 'webmo_cached_users';
-
 const userGrid = document.getElementById('user-grid');
 const loadingDiv = document.getElementById('loading');
 const scrollLoader = document.getElementById('scroll-loader');
@@ -46,10 +44,9 @@ async function init() {
         }
 
         if (currentUser) {
-            // Handle URL parameter first to ensure the user is processed before loading others.
-            await handleUrlUserParameter();
+            await handleInitialQueryUser();
+            loadCachedUsers();
             await loadContent();
-            await loadCachedUsers();
         } else {
             loadingDiv.textContent = 'Please log in to see your followed users.';
             loadingDiv.style.display = 'block';
@@ -58,64 +55,6 @@ async function init() {
         console.error("Initialization error:", error);
         loadingDiv.textContent = 'Could not load user data. Please try again.';
         loadingDiv.style.display = 'block';
-    }
-}
-
-async function handleUrlUserParameter() {
-    const params = new URLSearchParams(window.location.search);
-    const username = params.get('user');
-    if (!username) return;
-
-    try {
-        const response = await fetch(`/api/v1/users/${username}`);
-        if (!response.ok) {
-            console.error(`User ${username} not found via URL parameter.`);
-            // Maybe show a notification to the user
-            return;
-        }
-        const { user } = await response.json();
-        
-        // Open the modal for the user from the URL.
-        openProfileModal(user);
-
-        // Check if the user is followed.
-        const followedUserIds = await getAllFollowingIds(currentUser.username);
-        const isFollowed = followedUserIds.has(user.id);
-        
-        // Check if a card for this user already exists.
-        const existingCard = userGrid.querySelector(`.user-card[data-user-id="${user.id}"]`);
-
-        if (!isFollowed && !existingCard) {
-            addUnfollowedUserToGrid(user);
-            cacheUnfollowedUser(user);
-        }
-    } catch (error) {
-        console.error(`Error handling user from URL parameter:`, error);
-    }
-}
-
-async function loadCachedUsers() {
-    const cachedUsers = JSON.parse(localStorage.getItem(CACHED_USERS_KEY) || '[]');
-    if (cachedUsers.length === 0) return;
-    
-    const followedUserIds = await getAllFollowingIds(currentUser.username);
-    
-    for (const user of cachedUsers) {
-        const isFollowed = followedUserIds.has(user.id);
-        const cardExists = userGrid.querySelector(`.user-card[data-user-id="${user.id}"]`);
-        
-        if (!isFollowed && !cardExists) {
-            addUnfollowedUserToGrid(user);
-        }
-    }
-}
-
-function cacheUnfollowedUser(user) {
-    let cachedUsers = JSON.parse(localStorage.getItem(CACHED_USERS_KEY) || '[]');
-    // Avoid duplicates
-    if (!cachedUsers.some(cachedUser => cachedUser.id === user.id)) {
-        cachedUsers.push(user);
-        localStorage.setItem(CACHED_USERS_KEY, JSON.stringify(cachedUsers));
     }
 }
 
@@ -275,8 +214,13 @@ async function performSearch() {
         // Step 2: Get all followed users to check against
         const followedUserIds = await getAllFollowingIds(currentUser.username);
         
+        // Get cached users
+        const cachedUsersJSON = localStorage.getItem('webmo_cached_users');
+        const cachedUsers = cachedUsersJSON ? JSON.parse(cachedUsersJSON) : [];
+        const cachedUserIds = new Set(cachedUsers.map(u => u.id));
+
         // Step 3: Filter search results
-        const filteredUsers = searchedUsers.filter(user => followedUserIds.has(user.id));
+        const filteredUsers = searchedUsers.filter(user => followedUserIds.has(user.id) || cachedUserIds.has(user.id));
 
         if (filteredUsers.length === 0) {
             loadingDiv.textContent = `You are not following any users matching "${currentSearchQuery}".`;
@@ -325,14 +269,20 @@ async function loadFollowingUsers(cursor = null) {
         const { data: users, meta } = data.following;
 
         if (users.length === 0 && !cursor) {
-            loadingDiv.textContent = "You aren't following anyone yet. Explore Websim to find creators!";
+            // Check if there are any cards at all. If not, show the message.
+            if (userGrid.children.length === 0) {
+                 loadingDiv.textContent = "You aren't following anyone yet. Explore Websim to find creators!";
+            }
         } else {
             loadingDiv.style.display = 'none';
         }
 
         for (const { follow } of users) {
-            const userCard = createUserCard(follow.user);
-            userGrid.appendChild(userCard);
+            // Prevent adding duplicate cards if the user is also in the cache
+            if (!userGrid.querySelector(`.user-card[data-user-id="${follow.user.id}"]`)) {
+                const userCard = createUserCard(follow.user);
+                userGrid.appendChild(userCard);
+            }
         }
         
         hasNextPage = meta.has_next_page;
@@ -350,14 +300,10 @@ async function loadFollowingUsers(cursor = null) {
 
 // --- UI Rendering ---
 
-function createUserCard(user, isNotFollowed = false) {
+function createUserCard(user) {
     const card = document.createElement('div');
     card.className = 'user-card';
-    if (isNotFollowed) {
-        card.classList.add('not-followed');
-    }
     card.setAttribute('data-user-id', user.id);
-    card.setAttribute('data-user-name', user.username.toLowerCase()); // For easier lookups
 
     const storedTips = localStorage.getItem(`tips_given_${user.id}`) || 0;
 
@@ -377,9 +323,55 @@ function createUserCard(user, isNotFollowed = false) {
     return card;
 }
 
-function addUnfollowedUserToGrid(user) {
-    const userCard = createUserCard(user, true); // true for isNotFollowed
-    userGrid.prepend(userCard); // Add to the top of the grid
+function loadCachedUsers() {
+    const cachedUsersJSON = localStorage.getItem('webmo_cached_users');
+    if (cachedUsersJSON) {
+        try {
+            const cachedUsers = JSON.parse(cachedUsersJSON);
+            cachedUsers.forEach(user => {
+                if (!userGrid.querySelector(`.user-card[data-user-id="${user.id}"]`)) {
+                    const userCard = createUserCard(user);
+                    userGrid.appendChild(userCard);
+                }
+            });
+        } catch (e) {
+            console.error("Failed to parse cached users from localStorage", e);
+            localStorage.removeItem('webmo_cached_users');
+        }
+    }
+}
+
+async function handleInitialQueryUser() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const username = urlParams.get('user');
+
+    if (!username) return;
+
+    // Clean the URL right away to prevent re-triggering on refresh.
+    const newUrl = window.location.pathname;
+    window.history.replaceState({}, document.title, newUrl);
+    
+    try {
+        const response = await fetch(`/api/v1/users/${username}`);
+        if (!response.ok) throw new Error(`User not found: ${username}`);
+        
+        const { user } = await response.json();
+        
+        if (user) {
+            openProfileModal(user);
+
+            const cachedUsersJSON = localStorage.getItem('webmo_cached_users');
+            let cachedUsers = cachedUsersJSON ? JSON.parse(cachedUsersJSON) : [];
+            
+            if (!cachedUsers.some(cachedUser => cachedUser.id === user.id)) {
+                cachedUsers.push(user);
+                localStorage.setItem('webmo_cached_users', JSON.stringify(cachedUsers));
+            }
+        }
+    } catch (error) {
+        console.error('Error handling user from query string:', error);
+        alert(`Could not load profile for user: ${username}`);
+    }
 }
 
 async function isGuest(username) {
@@ -554,11 +546,26 @@ window.addEventListener('click', (event) => {
 let searchTimeout;
 searchInput.addEventListener('input', () => {
     clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(handleSearch, 300);
+    searchTimeout = setTimeout(() => {
+        const query = searchInput.value.trim();
+        if (query !== currentSearchQuery) {
+            currentSearchQuery = query;
+            userGrid.innerHTML = ''; // Clear the grid for new state
+            nextCursor = null;
+            hasNextPage = true;
+            
+            if (!currentSearchQuery) {
+                // If search is cleared, reload cached users before followers.
+                loadCachedUsers();
+            }
+            
+            loadContent(null);
+        }
+    }, 300);
 });
 
 window.addEventListener('scroll', () => {
-    if (isLoading || !hasNextPage) return;
+    if (isLoading || !hasNextPage || currentSearchQuery) return; // Disable scroll loading for search
 
     const {
         scrollTop,
