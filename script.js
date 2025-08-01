@@ -18,6 +18,7 @@ const closeProfileModalButton = document.getElementById('close-profile-modal');
 const profileIframe = document.getElementById('profile-iframe');
 const profileNotificationUsername = document.getElementById('profile-notification-username');
 const iframeLoader = document.getElementById('iframe-loader');
+const tipUserButton = document.getElementById('tip-user-button');
 
 async function init() {
     try {
@@ -37,6 +38,22 @@ async function init() {
         loadingDiv.textContent = 'Could not load user data. Please try again.';
         loadingDiv.style.display = 'block';
     }
+}
+
+async function handleTipUser() {
+    if (!viewedProfileData || !viewedProfileData.user) {
+        console.error("No user selected to tip.");
+        return;
+    }
+    const userToTip = viewedProfileData.user;
+    
+    // Note: This will post a tip comment on the CURRENT project ("Webmo"),
+    // and the credits will go to the creator of the Webmo project.
+    // The message will indicate who the tip is intended for.
+    window.websim.postComment({
+        content: `Tip for @${userToTip.username}`,
+        credits: 10
+    });
 }
 
 async function getAllFollowingIds(username) {
@@ -395,6 +412,8 @@ function handleSearch() {
 }
 
 // --- Event Listeners ---
+
+tipUserButton.addEventListener('click', handleTipUser);
 
 closeProfileModalButton.addEventListener('click', closeProfileModal);
 
