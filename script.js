@@ -8,11 +8,13 @@ let hasNextPage = true;
 let isLoading = false;
 let currentSearchQuery = '';
 let viewedProfileData = null; // Store data about the user/project being viewed in the modal
+let cardOrder = 0;
 
 const userGrid = document.getElementById('user-grid');
 const loadingDiv = document.getElementById('loading');
 const scrollLoader = document.getElementById('scroll-loader');
 const searchInput = document.getElementById('search-input');
+const sortSelect = document.getElementById('sort-select');
 
 // Tip Modal Elements
 const tipCreatorButton = document.getElementById('tip-creator-btn');
@@ -40,6 +42,7 @@ const profileNotificationUsername = document.getElementById('profile-notificatio
 const iframeLoader = document.getElementById('iframe-loader');
 
 async function init() {
+    cardOrder = 0;
     try {
         [currentUser, currentProject, projectCreator] = await Promise.all([
             window.websim.getCurrentUser(),
@@ -55,6 +58,7 @@ async function init() {
             await handleInitialQueryUser();
             loadCachedUsers();
             await loadContent();
+            sortUserGrid(sortSelect.value);
         } else {
             loadingDiv.textContent = 'Please log in to see your followed users.';
             loadingDiv.style.display = 'block';
@@ -312,6 +316,7 @@ function createUserCard(user) {
     const card = document.createElement('div');
     card.className = 'user-card';
     card.setAttribute('data-user-id', user.id);
+    card.setAttribute('data-order', cardOrder++);
 
     const storedTips = localStorage.getItem(`tips_given_${user.id}`) || 0;
 
@@ -414,6 +419,8 @@ function addUserToCacheAndGrid(user) {
     if (loadingDiv.textContent.includes("aren't following anyone")) {
         loadingDiv.style.display = 'none';
     }
+    
+    sortUserGrid(sortSelect.value);
 }
 
 async function isGuest(username) {
@@ -584,6 +591,10 @@ async function handleAddUserSubmit(e) {
 
 // --- Event Listeners ---
 
+sortSelect.addEventListener('change', () => {
+    sortUserGrid(sortSelect.value);
+});
+
 if (tipCreatorButton) {
     tipCreatorButton.addEventListener('click', openCreatorTipModal);
 }
@@ -635,11 +646,12 @@ window.addEventListener('click', (event) => {
 let searchTimeout;
 searchInput.addEventListener('input', () => {
     clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => {
+    searchTimeout = setTimeout(async () => {
         const query = searchInput.value.trim();
         if (query !== currentSearchQuery) {
             currentSearchQuery = query;
             userGrid.innerHTML = ''; // Clear the grid for new state
+            cardOrder = 0;
             nextCursor = null;
             hasNextPage = true;
             
@@ -648,7 +660,8 @@ searchInput.addEventListener('input', () => {
                 loadCachedUsers();
             }
             
-            loadContent(null);
+            await loadContent(null);
+            sortUserGrid(sortSelect.value);
         }
     }, 300);
 });
@@ -662,8 +675,38 @@ window.addEventListener('scroll', () => {
         clientHeight
     } = document.documentElement;
     if (scrollTop + clientHeight >= scrollHeight - 100) {
-        loadContent(nextCursor);
+        (async () => {
+            await loadContent(nextCursor);
+            sortUserGrid(sortSelect.value);
+        })();
     }
 });
 
 init();
+
+function sortUserGrid(sortBy) {
+    const userCards = Array.from(userGrid.querySelectorAll('.user-card'));
+
+    if (sortBy === 'default') {
+        userCards.sort((a, b) => {
+            const orderA = parseInt(a.dataset.order, 10) || 0;
+            const orderB = parseInt(b.dataset.order, 10) || 0;
+            return orderA - orderB;
+        });
+    } else {
+        userCards.sort((a, b) => {
+            const tipsA = parseInt(a.querySelector('.tip-amount').textContent, 10) || 0;
+            const tipsB = parseInt(b.querySelector('.tip-amount').textContent, 10) || 0;
+
+            if (sortBy === 'tips-desc') {
+                return tipsB - tipsA;
+            } else { // 'tips-asc'
+                return tipsA - tipsB;
+            }
+        });
+    }
+
+    // Re-append sorted cards
+    userGrid.innerHTML = '';
+    userCards.forEach(card => userGrid.appendChild(card));
+}
