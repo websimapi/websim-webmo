@@ -9,6 +9,7 @@ let isLoading = false;
 let currentSearchQuery = '';
 let viewedProfileData = null; // Store data about the user/project being viewed in the modal
 let cardOrder = 0;
+let isSorting = false; // To prevent scroll loading while sorting is in progress
 
 const userGrid = document.getElementById('user-grid');
 const loadingDiv = document.getElementById('loading');
@@ -56,9 +57,9 @@ async function init() {
 
         if (currentUser) {
             await handleInitialQueryUser();
-            loadCachedUsers();
-            await loadContent();
-            sortUserGrid(sortSelect.value);
+            loadCachedUsers(); // Load cached users first
+            await loadContent(); // Then load followed users
+            sortUserGrid(sortSelect.value); // Initial sort of what's loaded
         } else {
             loadingDiv.textContent = 'Please log in to see your followed users.';
             loadingDiv.style.display = 'block';
@@ -92,11 +93,38 @@ async function getAllFollowingIds(username) {
             cursor = meta.end_cursor;
         } catch (error) {
             console.error('Failed to fetch a page of followed users:', error);
-            // Stop paginating on error to avoid infinite loops
             hasNextPage = false; 
         }
     }
     return followedUserIds;
+}
+
+async function getAllFollowing(username) {
+    const followedUsers = [];
+    let hasNextPage = true;
+    let cursor = null;
+
+    while (hasNextPage) {
+        const params = new URLSearchParams({ first: '100' });
+        if (cursor) {
+            params.append('after', cursor);
+        }
+        try {
+            const response = await fetch(`/api/v1/users/${username}/following?${params.toString()}`);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const data = await response.json();
+            const { data: users, meta } = data.following;
+            users.forEach(item => followedUsers.push(item.follow.user));
+            hasNextPage = meta.has_next_page;
+            cursor = meta.end_cursor;
+        } catch (error) {
+            console.error('Failed to fetch a page of followed users:', error);
+            hasNextPage = false; 
+        }
+    }
+    return followedUsers;
 }
 
 // --- Tip Calculation and Storage ---
@@ -129,7 +157,7 @@ async function getAllUserProjectIds(userId) {
     return Array.from(projectIds);
 }
 
-async function updateAndDisplayTips(userId) {
+async function calculateTotalTips(userId) {
     let totalTips = 0;
     try {
         const projectIds = await getAllUserProjectIds(userId);
@@ -141,13 +169,17 @@ async function updateAndDisplayTips(userId) {
         }
 
         localStorage.setItem(`tips_given_${userId}`, totalTips);
+        return totalTips;
 
     } catch (error) {
-        console.error(`Failed to update tips for user ${userId}:`, error);
+        console.error(`Failed to calculate tips for user ${userId}:`, error);
         // Fallback to localStorage if API fails
-        totalTips = parseInt(localStorage.getItem(`tips_given_${userId}`) || '0', 10);
+        return parseInt(localStorage.getItem(`tips_given_${userId}`) || '0', 10);
     }
-    
+}
+
+async function updateAndDisplayTips(userId) {
+    const totalTips = await calculateTotalTips(userId);
     const tipElement = userGrid.querySelector(`.user-card[data-user-id="${userId}"] .tip-amount`);
     if (tipElement) {
         tipElement.textContent = totalTips;
@@ -191,6 +223,8 @@ async function fetchTipsForProject(projectId, tipperUserId) {
 }
 
 async function loadContent(cursor = null) {
+    if (isSorting) return; // Don't load content while a full sort is happening
+
     if (currentSearchQuery) {
         // Search is not paginated, only load on initial search
         if (cursor === null) {
@@ -255,7 +289,7 @@ async function performSearch() {
 }
 
 async function loadFollowingUsers(cursor = null) {
-    if (isLoading || (!hasNextPage && cursor)) return;
+    if (isLoading || (!hasNextPage && cursor) || isSorting) return;
     isLoading = true;
 
     if (cursor) {
@@ -591,8 +625,60 @@ async function handleAddUserSubmit(e) {
 
 // --- Event Listeners ---
 
-sortSelect.addEventListener('change', () => {
-    sortUserGrid(sortSelect.value);
+sortSelect.addEventListener('change', async () => {
+    const sortBy = sortSelect.value;
+
+    if (sortBy === 'default') {
+        isSorting = false;
+        userGrid.innerHTML = '';
+        cardOrder = 0;
+        nextCursor = null;
+        hasNextPage = true;
+        loadCachedUsers();
+        await loadFollowingUsers(null);
+    } else {
+        isSorting = true;
+        hasNextPage = false; // Disable infinite scroll during tip sort
+        loadingDiv.textContent = 'Calculating tips and sorting...';
+        loadingDiv.style.display = 'block';
+        userGrid.innerHTML = '';
+
+        try {
+            // 1. Get all users (followed + cached)
+            const followedUsers = await getAllFollowing(currentUser.username);
+            const cachedUsersJSON = localStorage.getItem('webmo_cached_users');
+            const cachedUsers = cachedUsersJSON ? JSON.parse(cachedUsersJSON) : [];
+            
+            const allUsersMap = new Map();
+            [...cachedUsers, ...followedUsers].forEach(user => allUsersMap.set(user.id, user));
+            const uniqueUsers = Array.from(allUsersMap.values());
+
+            // 2. Fetch all tip data in parallel
+            const usersWithTips = await Promise.all(uniqueUsers.map(async user => {
+                const totalTips = await calculateTotalTips(user.id);
+                return { user, totalTips };
+            }));
+
+            // 3. Sort
+            usersWithTips.sort((a, b) => {
+                return sortBy === 'tips-desc' ? b.totalTips - a.totalTips : a.totalTips - b.totalTips;
+            });
+
+            // 4. Render
+            loadingDiv.style.display = 'none';
+            usersWithTips.forEach(({ user, totalTips }) => {
+                const card = createUserCard(user);
+                card.querySelector('.tip-amount').textContent = totalTips;
+                userGrid.appendChild(card);
+            });
+
+        } catch (error) {
+            console.error("Error during tip sort:", error);
+            loadingDiv.textContent = 'Failed to sort by tips.';
+        } finally {
+            isSorting = false;
+        }
+    }
 });
 
 if (tipCreatorButton) {
@@ -667,7 +753,7 @@ searchInput.addEventListener('input', () => {
 });
 
 window.addEventListener('scroll', () => {
-    if (isLoading || !hasNextPage || currentSearchQuery) return; // Disable scroll loading for search
+    if (isLoading || !hasNextPage || currentSearchQuery || isSorting) return; // Disable scroll loading for search and sorting
 
     const {
         scrollTop,
@@ -677,7 +763,8 @@ window.addEventListener('scroll', () => {
     if (scrollTop + clientHeight >= scrollHeight - 100) {
         (async () => {
             await loadContent(nextCursor);
-            sortUserGrid(sortSelect.value);
+            // Don't re-sort the whole grid on scroll, just append.
+            // sortUserGrid(sortSelect.value); 
         })();
     }
 });
@@ -685,28 +772,16 @@ window.addEventListener('scroll', () => {
 init();
 
 function sortUserGrid(sortBy) {
-    const userCards = Array.from(userGrid.querySelectorAll('.user-card'));
-
     if (sortBy === 'default') {
+        const userCards = Array.from(userGrid.querySelectorAll('.user-card'));
         userCards.sort((a, b) => {
             const orderA = parseInt(a.dataset.order, 10) || 0;
             const orderB = parseInt(b.dataset.order, 10) || 0;
             return orderA - orderB;
         });
-    } else {
-        userCards.sort((a, b) => {
-            const tipsA = parseInt(a.querySelector('.tip-amount').textContent, 10) || 0;
-            const tipsB = parseInt(b.querySelector('.tip-amount').textContent, 10) || 0;
-
-            if (sortBy === 'tips-desc') {
-                return tipsB - tipsA;
-            } else { // 'tips-asc'
-                return tipsA - tipsB;
-            }
-        });
+        userGrid.innerHTML = '';
+        userCards.forEach(card => userGrid.appendChild(card));
     }
-
-    // Re-append sorted cards
-    userGrid.innerHTML = '';
-    userCards.forEach(card => userGrid.appendChild(card));
+    // For tip-based sorting, the logic is now handled in the 'change' event listener
+    // to ensure all data is fetched first.
 }
