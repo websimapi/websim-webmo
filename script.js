@@ -46,9 +46,10 @@ async function init() {
         }
 
         if (currentUser) {
+            // Handle URL parameter first to ensure the user is processed before loading others.
+            await handleUrlUserParameter();
             await loadContent();
             await loadCachedUsers();
-            await handleUrlUserParameter();
         } else {
             loadingDiv.textContent = 'Please log in to see your followed users.';
             loadingDiv.style.display = 'block';
