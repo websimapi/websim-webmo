@@ -26,7 +26,7 @@ async function init() {
         ]);
 
         if (currentUser) {
-            await loadUsers();
+            await loadContent();
         } else {
             loadingDiv.textContent = 'Please log in to see your followed users.';
             loadingDiv.style.display = 'block';
@@ -38,7 +38,69 @@ async function init() {
     }
 }
 
-async function loadUsers(cursor = null) {
+async function loadContent(cursor = null) {
+    if (currentSearchQuery) {
+        // If there's a search query, use the search logic
+        if (cursor === null) { // only load on initial search, not scrolling
+             await performSearch();
+        }
+    } else {
+        // Otherwise, use the standard "load following" logic
+        await loadFollowingUsers(cursor);
+    }
+}
+
+async function performSearch() {
+    if (isLoading) return;
+    isLoading = true;
+    loadingDiv.textContent = `Searching for "${currentSearchQuery}"...`;
+    loadingDiv.style.display = 'block';
+    userGrid.innerHTML = '';
+    scrollLoader.style.display = 'none';
+
+    try {
+        // Step 1: Search for users
+        const searchResponse = await fetch(`/api/v1/user-search?query=${encodeURIComponent(currentSearchQuery)}`);
+        if (!searchResponse.ok) throw new Error(`User search failed with status ${searchResponse.status}`);
+        const searchData = await searchResponse.json();
+        const searchedUsers = searchData.data;
+
+        if (searchedUsers.length === 0) {
+            loadingDiv.textContent = `No users found for "${currentSearchQuery}".`;
+            isLoading = false;
+            return;
+        }
+
+        // Step 2: Get all followed users to check against
+        const followedUsersResponse = await fetch(`/api/v1/users/${currentUser.username}/following?first=100`); // Assuming a user won't follow more than 100 people matching a query, adjust if needed
+        if (!followedUsersResponse.ok) throw new Error(`Fetching followed users failed with status ${followedUsersResponse.status}`);
+        const followedUsersData = await followedUsersResponse.json();
+        const followedUserIds = new Set(followedUsersData.following.data.map(item => item.follow.user.id));
+        
+        // Step 3: Filter search results
+        const filteredUsers = searchedUsers.filter(user => followedUserIds.has(user.id));
+
+        if (filteredUsers.length === 0) {
+            loadingDiv.textContent = `You are not following any users matching "${currentSearchQuery}".`;
+        } else {
+            loadingDiv.style.display = 'none';
+            filteredUsers.forEach(user => {
+                const userCard = createUserCard(user);
+                userGrid.appendChild(userCard);
+            });
+        }
+        
+        hasNextPage = false; // Disable infinite scroll for search results
+
+    } catch (error) {
+        console.error('Failed to perform search:', error);
+        loadingDiv.textContent = 'Error during search.';
+    } finally {
+        isLoading = false;
+    }
+}
+
+async function loadFollowingUsers(cursor = null) {
     if (isLoading || (!hasNextPage && cursor)) return;
     isLoading = true;
 
@@ -46,7 +108,7 @@ async function loadUsers(cursor = null) {
         scrollLoader.style.display = 'block';
     } else {
         loadingDiv.style.display = 'block';
-        userGrid.innerHTML = ''; // Clear for new search or initial load
+        userGrid.innerHTML = '';
     }
 
     try {
@@ -55,9 +117,6 @@ async function loadUsers(cursor = null) {
         });
         if (cursor) {
             params.append('after', cursor);
-        }
-        if (currentSearchQuery) {
-            params.append('query', currentSearchQuery);
         }
 
         const response = await fetch(`/api/v1/users/${currentUser.username}/following?${params.toString()}`);
@@ -68,11 +127,7 @@ async function loadUsers(cursor = null) {
         const { data: users, meta } = data.following;
 
         if (users.length === 0 && !cursor) {
-             if (currentSearchQuery) {
-                loadingDiv.textContent = `No users found for "${currentSearchQuery}".`;
-            } else {
-                loadingDiv.textContent = "You aren't following anyone yet. Explore Websim to find creators!";
-            }
+            loadingDiv.textContent = "You aren't following anyone yet. Explore Websim to find creators!";
         } else {
             loadingDiv.style.display = 'none';
         }
@@ -187,13 +242,21 @@ function closeProfileModal() {
 }
 
 function handleSearch() {
-    const query = searchInput.value.trim().toLowerCase();
-    if(query === currentSearchQuery) return;
+    const query = searchInput.value.trim();
+    if (query === currentSearchQuery) return;
 
     currentSearchQuery = query;
-    nextCursor = null;
-    hasNextPage = true;
-    loadUsers();
+    nextCursor = null; // Reset cursor
+    hasNextPage = true; // Reset pagination
+    userGrid.innerHTML = ''; // Clear grid immediately
+    
+    // If search is cleared, load initial list. Otherwise, perform search.
+    if (!query) {
+        loadingDiv.textContent = 'Loading followed users...';
+        loadFollowingUsers();
+    } else {
+        loadContent();
+    }
 }
 
 // --- Event Listeners ---
@@ -221,7 +284,7 @@ window.addEventListener('scroll', () => {
         clientHeight
     } = document.documentElement;
     if (scrollTop + clientHeight >= scrollHeight - 100) {
-        loadUsers(nextCursor);
+        loadContent(nextCursor);
     }
 });
 
