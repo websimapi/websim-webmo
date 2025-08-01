@@ -15,6 +15,7 @@ const searchInput = document.getElementById('search-input');
 const profileModal = document.getElementById('profile-modal');
 const closeProfileModalButton = document.getElementById('close-profile-modal');
 const profileIframe = document.getElementById('profile-iframe');
+const profileNotificationUsername = document.getElementById('profile-notification-username');
 
 async function init() {
     try {
@@ -116,6 +117,7 @@ function openProfileModal(user) {
     if (!user) return;
     const profileUrl = `https://websim.com/@${user.username}`;
     profileIframe.src = profileUrl;
+    profileNotificationUsername.textContent = `@${user.username}`;
     profileModal.style.display = 'flex';
 }
 

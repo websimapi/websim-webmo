@@ -138,6 +138,10 @@ main {
     cursor: pointer;
 }
 
+#profile-notification p {
+    margin: 0;
+}
+
 .notification {
     background-color: #fff3cd;
     color: #856404;
@@ -149,6 +153,10 @@ main {
 
 .notification p {
     margin: 0;
+}
+
+.notification p strong {
+    color: inherit;
 }
 
 .iframe-container {
