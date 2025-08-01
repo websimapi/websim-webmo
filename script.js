@@ -38,10 +38,39 @@ async function init() {
     }
 }
 
+async function getAllFollowingIds(username) {
+    const followedUserIds = new Set();
+    let hasNextPage = true;
+    let cursor = null;
+
+    while (hasNextPage) {
+        const params = new URLSearchParams({ first: '100' });
+        if (cursor) {
+            params.append('after', cursor);
+        }
+        try {
+            const response = await fetch(`/api/v1/users/${username}/following?${params.toString()}`);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const data = await response.json();
+            const { data: users, meta } = data.following;
+            users.forEach(item => followedUserIds.add(item.follow.user.id));
+            hasNextPage = meta.has_next_page;
+            cursor = meta.end_cursor;
+        } catch (error) {
+            console.error('Failed to fetch a page of followed users:', error);
+            // Stop paginating on error to avoid infinite loops
+            hasNextPage = false; 
+        }
+    }
+    return followedUserIds;
+}
+
 async function loadContent(cursor = null) {
     if (currentSearchQuery) {
-        // If there's a search query, use the search logic
-        if (cursor === null) { // only load on initial search, not scrolling
+        // Search is not paginated, only load on initial search
+        if (cursor === null) {
              await performSearch();
         }
     } else {
@@ -72,10 +101,7 @@ async function performSearch() {
         }
 
         // Step 2: Get all followed users to check against
-        const followedUsersResponse = await fetch(`/api/v1/users/${currentUser.username}/following?first=100`); // Assuming a user won't follow more than 100 people matching a query, adjust if needed
-        if (!followedUsersResponse.ok) throw new Error(`Fetching followed users failed with status ${followedUsersResponse.status}`);
-        const followedUsersData = await followedUsersResponse.json();
-        const followedUserIds = new Set(followedUsersData.following.data.map(item => item.follow.user.id));
+        const followedUserIds = await getAllFollowingIds(currentUser.username);
         
         // Step 3: Filter search results
         const filteredUsers = searchedUsers.filter(user => followedUserIds.has(user.id));
