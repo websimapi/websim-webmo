@@ -19,6 +19,7 @@
 </head>
 <body>
     <header>
+        <button id="add-user-btn" class="add-user-button" title="Add a user to tip">+</button>
         <h1>Webmo</h1>
         <p>Tip your favorite creators.</p>
         <button id="tip-creator-btn" class="tip-creator-button" style="display: none;">Tip Creator</button>
@@ -31,6 +32,20 @@
         <div id="user-grid"></div>
         <div id="scroll-loader" style="display: none; text-align: center; padding: 1rem;">Loading more...</div>
     </main>
+
+    <div id="add-user-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <button id="close-add-user-modal" class="close-button">&times;</button>
+            <h2>Add User to Tip</h2>
+            <form id="add-user-form">
+                <div class="form-group">
+                    <label for="add-username-input">Username</label>
+                    <input type="text" id="add-username-input" placeholder="Enter username (e.g., neal)" required>
+                </div>
+                <button type="submit" id="submit-add-user-button">Add User</button>
+            </form>
+        </div>
+    </div>
 
     <div id="tip-modal" class="modal-overlay" style="display: none;">
         <div class="modal-content">

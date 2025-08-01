@@ -25,6 +25,14 @@ const tipUsernameSpan = document.getElementById('tip-username');
 const submitTipButton = document.getElementById('submit-tip-button');
 const presetTipButtons = document.querySelectorAll('.preset-tip-btn');
 
+// Add User Modal Elements
+const addUserButton = document.getElementById('add-user-btn');
+const addUserModal = document.getElementById('add-user-modal');
+const closeAddUserModalButton = document.getElementById('close-add-user-modal');
+const addUserForm = document.getElementById('add-user-form');
+const addUsernameInput = document.getElementById('add-username-input');
+const submitAddUserButton = document.getElementById('submit-add-user-button');
+
 const profileModal = document.getElementById('profile-modal');
 const closeProfileModalButton = document.getElementById('close-profile-modal');
 const profileIframe = document.getElementById('profile-iframe');
@@ -351,26 +359,60 @@ async function handleInitialQueryUser() {
     const newUrl = window.location.pathname;
     window.history.replaceState({}, document.title, newUrl);
     
+    const addedUser = await fetchAndAddUser(username);
+    if(addedUser) {
+        openProfileModal(addedUser);
+    }
+}
+
+async function fetchAndAddUser(username) {
     try {
         const response = await fetch(`/api/v1/users/${username}`);
-        if (!response.ok) throw new Error(`User not found: ${username}`);
+        if (!response.ok) {
+            if (response.status === 404) {
+                 throw new Error(`User not found: @${username}`);
+            }
+            throw new Error(`Failed to fetch user. Status: ${response.status}`);
+        }
         
         const { user } = await response.json();
         
         if (user) {
-            openProfileModal(user);
-
-            const cachedUsersJSON = localStorage.getItem('webmo_cached_users');
-            let cachedUsers = cachedUsersJSON ? JSON.parse(cachedUsersJSON) : [];
-            
-            if (!cachedUsers.some(cachedUser => cachedUser.id === user.id)) {
-                cachedUsers.push(user);
-                localStorage.setItem('webmo_cached_users', JSON.stringify(cachedUsers));
-            }
+            addUserToCacheAndGrid(user);
+            return user; // Return user on success
+        } else {
+            throw new Error(`Invalid user data received for @${username}`);
         }
     } catch (error) {
-        console.error('Error handling user from query string:', error);
-        alert(`Could not load profile for user: ${username}`);
+        console.error('Error fetching and adding user:', error);
+        alert(error.message);
+        return null; // Return null on failure
+    }
+}
+
+function addUserToCacheAndGrid(user) {
+    // Check if user card already exists
+    if (userGrid.querySelector(`.user-card[data-user-id="${user.id}"]`)) {
+        alert(`@${user.username} is already on your list.`);
+        return;
+    }
+
+    // Add card to grid
+    const userCard = createUserCard(user);
+    userGrid.prepend(userCard); // Add to top for visibility
+
+    // Add to local storage cache
+    const cachedUsersJSON = localStorage.getItem('webmo_cached_users');
+    let cachedUsers = cachedUsersJSON ? JSON.parse(cachedUsersJSON) : [];
+    
+    if (!cachedUsers.some(cachedUser => cachedUser.id === user.id)) {
+        cachedUsers.push(user);
+        localStorage.setItem('webmo_cached_users', JSON.stringify(cachedUsers));
+    }
+
+    // If "not following" message is visible, hide it.
+    if (loadingDiv.textContent.includes("aren't following anyone")) {
+        loadingDiv.style.display = 'none';
     }
 }
 
@@ -511,6 +553,35 @@ async function handleTipSubmit(e) {
     }
 }
 
+// --- Add User Modal Logic ---
+
+function openAddUserModal() {
+    addUserModal.style.display = 'flex';
+    addUsernameInput.focus();
+}
+
+function closeAddUserModal() {
+    addUserModal.style.display = 'none';
+    addUserForm.reset();
+}
+
+async function handleAddUserSubmit(e) {
+    e.preventDefault();
+    if (submitAddUserButton.disabled) return;
+
+    const username = addUsernameInput.value.trim();
+    if (!username) return;
+
+    submitAddUserButton.disabled = true;
+    submitAddUserButton.textContent = 'Adding...';
+
+    await fetchAndAddUser(username);
+
+    submitAddUserButton.disabled = false;
+    submitAddUserButton.textContent = 'Add User';
+    closeAddUserModal();
+}
+
 // --- Event Listeners ---
 
 if (tipCreatorButton) {
@@ -534,6 +605,24 @@ presetTipButtons.forEach(button => {
         tipAmountInput.value = button.dataset.amount;
     });
 });
+
+// Add User Modal Listeners
+if (addUserButton) {
+    addUserButton.addEventListener('click', openAddUserModal);
+}
+if (closeAddUserModalButton) {
+    closeAddUserModalButton.addEventListener('click', closeAddUserModal);
+}
+if (addUserModal) {
+    addUserModal.addEventListener('click', (event) => {
+        if (event.target === addUserModal) {
+            closeAddUserModal();
+        }
+    });
+}
+if (addUserForm) {
+    addUserForm.addEventListener('submit', handleAddUserSubmit);
+}
 
 closeProfileModalButton.addEventListener('click', closeProfileModal);
 
